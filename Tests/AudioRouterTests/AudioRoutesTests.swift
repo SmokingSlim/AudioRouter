@@ -218,7 +218,7 @@ enum AudioRoutesTests {
         _ = NSApplication.shared
         var owners: [SimulatedRouteOwner] = []
         let routes = AudioRoutes { let owner = SimulatedRouteOwner(); owners.append(owner); return owner }
-        let controller = SoundToolApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
+        let controller = AudioRouterApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
                                       processes: SimulatedProcessInventory(clients: [client(41), client(42), client(43)]))
         controller.refreshInventory()
         func choose(_ row: ApplicationAudioRow, destination: AudioDevice?) {
@@ -260,7 +260,7 @@ enum AudioRoutesTests {
         precondition(monitor.isEnabled && NSApp.sendAction(monitor.action!, to: monitor.target, from: monitor))
         precondition(routes.routes.count == 2 && routes.routes.last!.isMonitor)
         // Inventory loss retains owned app rows and their Original output action.
-        let retained = SoundToolApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
+        let retained = AudioRouterApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
                                     processes: SimulatedProcessInventory(clients: []))
         retained.refreshInventory()
         precondition(retained.panel.applicationRows.count == 2)

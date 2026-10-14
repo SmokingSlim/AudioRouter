@@ -1,4 +1,5 @@
 .build/
+.build-before-rename/
 build/
 .DS_Store
 .swiftpm/

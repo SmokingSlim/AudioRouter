@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "SoundTool",
+    name: "AudioRouter",
     platforms: [.macOS(.v15)],
-    products: [.executable(name: "SoundTool", targets: ["SoundTool"])],
+    products: [.executable(name: "AudioRouter", targets: ["AudioRouter"])],
     targets: [
-        .executableTarget(name: "SoundTool"),
+        .executableTarget(name: "AudioRouter"),
     ]
 )

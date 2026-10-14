@@ -2,7 +2,7 @@ import AppKit
 import CoreAudio
 
 @MainActor
-final class SoundToolApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AudioRouterApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let audio: AudioDevices
     private let processes: any AudioProcessInventory
     let routes: AudioRoutes
@@ -223,11 +223,11 @@ final class SoundToolApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             isStopping: false, restorationPending: false, suppressionRequested: false,
             hasDestination: false, canSuppressOriginal: false)
         let snapshot = routes.routes.map { RenderedRoute(id: $0.id, destination: $0.owner.mirrorDestination?.id, state: $0.presentation) }
-        statusItem?.button?.toolTip = "SoundTool — \(routes.routes.count) owned audio routes"
+        statusItem?.button?.toolTip = "AudioRouter — \(routes.routes.count) owned audio routes"
         let symbol = routes.routes.isEmpty ? "speaker.wave.2" : "waveform"
         if displayedSymbol != symbol {
             displayedSymbol = symbol
-            statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "SoundTool")
+            statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "AudioRouter")
         }
         guard force || popover.isShown else { return }
         // Audio owners continue polling/restoring in common run-loop modes.
@@ -341,7 +341,7 @@ final class SoundToolApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
             let status = AudioObjectAddPropertyListenerBlock(system, &address, DispatchQueue.main, listener)
-            if status != noErr { NSLog("SoundTool: audio notification registration failed: %d", status) }
+            if status != noErr { NSLog("AudioRouter: audio notification registration failed: %d", status) }
         }
     }
 
@@ -371,7 +371,7 @@ final class SoundToolApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard !presentingError, !pendingErrors.isEmpty else { return }
         presentingError = true
         let alert = NSAlert()
-        alert.messageText = "SoundTool couldn’t complete the audio operation"
+        alert.messageText = "AudioRouter couldn’t complete the audio operation"
         alert.informativeText = pendingErrors.removeFirst()
         alert.alertStyle = .warning
         if popover.isShown, let window = panel.view.window {

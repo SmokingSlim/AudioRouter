@@ -303,7 +303,7 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
         outerScroll.hasVerticalScroller = true
         outerScroll.autohidesScrollers = true
         outerScroll.drawsBackground = false
-        outerScroll.setAccessibilityLabel("SoundTool controls")
+        outerScroll.setAccessibilityLabel("AudioRouter controls")
         let document = FlippedAudioView()
         outerScroll.documentView = document
         view.addSubview(outerScroll)
@@ -321,7 +321,7 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
             content.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 16),
             content.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -16),
         ])
-        let header = Self.label("SoundTool")
+        let header = Self.label("AudioRouter")
         header.font = .systemFont(ofSize: 20, weight: .semibold)
         add(header)
         let system = Self.section(title: "System · macOS defaults", views: systemRows)

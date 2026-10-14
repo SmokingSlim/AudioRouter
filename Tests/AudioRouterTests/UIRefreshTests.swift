@@ -40,7 +40,7 @@ enum UIRefreshTests {
         let inventory = MutableUIProcessInventory((1...12).map { AudioRoutesTests.client(UInt32($0)) })
         var owners: [SimulatedRouteOwner] = []
         let routes = AudioRoutes { let owner = SimulatedRouteOwner(); owners.append(owner); return owner }
-        let controller = SoundToolApp(audio: AudioDevices(properties: properties), routes: routes, processes: inventory)
+        let controller = AudioRouterApp(audio: AudioDevices(properties: properties), routes: routes, processes: inventory)
         controller.refreshInventory()
         let panel = controller.panel
         precondition(panel.routePicker.isHiddenOrHasHiddenAncestor)

@@ -151,7 +151,7 @@ enum SystemAudioTests {
         // system HAL writes; actual process inventory is read-only.
         _ = NSApplication.shared
         let uiProperties = SimulatedAudioDeviceProperties()
-        let controller = SoundToolApp(audio: AudioDevices(properties: uiProperties))
+        let controller = AudioRouterApp(audio: AudioDevices(properties: uiProperties))
         controller.refreshInventory()
         for row in controller.panel.systemRows {
             let before = uiProperties.defaults

@@ -33,7 +33,7 @@ final class ProcessMeter {
             case .missingIOProc: "Core Audio did not return a monitor callback handle."
             case .busy: "Stop the existing monitor before starting another."
             case .changedClient: "The audio client changed. Reopen the menu and try again."
-            case .selfCapture: "SoundTool cannot mirror its own output (feedback risk)."
+            case .selfCapture: "AudioRouter cannot mirror its own output (feedback risk)."
             case .captureStopped: "The selected output stopped receiving capture callbacks."
             case .playbackNotReady: "Wait for stable replacement playback before suppressing the original output."
             case .playbackInterrupted: "Replacement playback stalled, underrun, or returned invalid output."
@@ -48,7 +48,7 @@ final class ProcessMeter {
         let destination: AudioDevice
         let reason: Error
         var message: String {
-            "\(reason.localizedDescription) SoundTool left the tap unmuted and released the route resources. Check playback on the current default output. Restart the route explicitly after reconnecting."
+            "\(reason.localizedDescription) AudioRouter left the tap unmuted and released the route resources. Check playback on the current default output. Restart the route explicitly after reconnecting."
         }
     }
 
@@ -125,7 +125,7 @@ final class ProcessMeter {
 
             let aggregateDescription: [String: Any] = [
                 "uid": "app.soundtool.local.monitor.\(UUID().uuidString)",
-                "name": "SoundTool Private Monitor",
+                "name": "AudioRouter Private Monitor",
                 "private": 1,
                 "subdevices": [],
                 "taps": [["uid": description.uuid.uuidString]],

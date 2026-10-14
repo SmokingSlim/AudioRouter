@@ -60,7 +60,7 @@ final class AudioRoutes {
         case capacity, unidentified, duplicateClient, monitorExists, cleanupPending
         var errorDescription: String? {
             switch self {
-            case .capacity: "SoundTool supports up to four owned routes, including monitoring. Stop a route before adding another."
+            case .capacity: "AudioRouter supports up to four owned routes, including monitoring. Stop a route before adding another."
             case .unidentified: "The audio client's lifetime identity is unavailable. Refresh and try again."
             case .duplicateClient: "This process already has an owned route. Restore and clean it up before starting another capture of that process."
             case .monitorExists: "Stop the existing diagnostics monitor before starting another monitor."
