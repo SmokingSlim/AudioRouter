@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>app.soundtool.local</string>
+    <key>CFBundleName</key><string>SoundTool</string>
+    <key>CFBundleDisplayName</key><string>SoundTool</string>
+    <key>CFBundleExecutable</key><string>SoundTool</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.10.1</string>
+    <key>CFBundleVersion</key><string>17</string>
+    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSAudioCaptureUsageDescription</key><string>SoundTool captures a selected app when you choose a hardware output on its application row or choose Monitor app only in diagnostics. Choosing an output plays captured audio through that device and automatically requests experimental suppression of the client's original playback once replacement playback is stable. Restore original or Stop restores original playback. App routing leaves the Mac's default output unchanged. System Output, Input and Sound Effects selectors separately change macOS defaults; input selection does not record the microphone. Audio is not saved or transmitted over the network.</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
