@@ -67,7 +67,12 @@ final class ProcessMeter {
     private var captureStart: UInt64 = 0
     private var captureFormat: AudioStreamBasicDescription?
     private var healthTick = 0
-    private(set) var clientID: AudioObjectID?
+    private(set) var playbackLevel: PlaybackLevel = .unity
+    func setPlaybackLevel(_ level: PlaybackLevel) {
+        playbackLevel = level
+        sink?.transport?.setLevel(level)
+    }
+
     private(set) var peak: Float = 0
     private(set) var exclusiveOutputPending = false
     var onLevel: ((Float) -> Void)?
@@ -96,15 +101,13 @@ final class ProcessMeter {
 
     var hasResources: Bool { tapID != nil || aggregateID != nil || ioProc != nil || sink?.hasResources == true }
 
-    func start(client: AudioProcess, mirroringTo destination: AudioDevice? = nil,
-               suppressWhenReady: Bool = false) throws {
+    func start(client: AudioProcess, mirroringTo destination: AudioDevice?,
+               suppressWhenReady: Bool) throws {
         guard !hasResources else { throw Failure.busy }
         // A process object is a transient ID, not a durable identity. Re-check
         // the observed PID and bundle ID immediately before creating a tap.
         let current = try AudioProcesses().snapshot().activeOutputClients.first { $0.id == client.id }
-        guard client.pid != nil, client.birth != nil, client.bundleID != nil,
-              current?.pid == client.pid, current?.birth == client.birth,
-              current?.bundleID == client.bundleID else {
+        guard let current, current.hasSameIdentity(as: client) else {
             throw Failure.changedClient
         }
         if let destination {
@@ -141,7 +144,7 @@ final class ProcessMeter {
             if let destination {
                 let playback = PlaybackSink(destination: destination)
                 sink = playback // retain partially configured resources on failure
-                try playback.prepare(sourceFormat: format)
+                try playback.prepare(sourceFormat: format, level: playbackLevel)
                 mirroredClient = client
             }
             let state = CaptureState(transport: sink?.transport)
@@ -156,7 +159,6 @@ final class ProcessMeter {
             ioProc = proc
             try check(AudioDeviceStart(aggregate, proc))
             started = true
-            clientID = client.id
             peak = 0
             captureStart = DispatchTime.now().uptimeNanoseconds
             healthTick = 0
@@ -243,7 +245,6 @@ final class ProcessMeter {
         playbackControl = nil
         stopRequested = false
         retryFailureReported = false
-        clientID = nil
         mirroredClient = nil
         captureState = nil
         captureFormat = nil

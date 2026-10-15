@@ -12,6 +12,8 @@ final class SimulatedRouteOwner: AudioRouteOwner {
     var canSuppressOriginal = false
     var exclusiveOutputPending = false
     var mirrorDestination: AudioDevice?
+    private(set) var playbackLevel: PlaybackLevel = .unity
+    func setPlaybackLevel(_ level: PlaybackLevel) { playbackLevel = level }
     var peak: Float = 0
     var transportStatus: String? { "simulated transport" }
     var onLevel: ((Float) -> Void)?
@@ -101,11 +103,12 @@ enum AudioRoutesTests {
         expectFailure { try routes.start(client: client(1), destination: b) }
         expectFailure { try routes.start(client: client(99, pid: client(1).pid), destination: b) } // alias HAL object
         precondition(owners.count == 2)
-        try! routes.toggleSuppression(first)
-        precondition(owners[0].suppressionRequested && !owners[1].suppressionRequested)
-        try! routes.toggleSuppression(first)
-        precondition(!owners[0].exclusiveOutputPending && owners[1].exclusiveOutputPending)
+        let quiet = PlaybackLevel(gain: 0.4, muted: true)!
+        try! routes.setPlaybackLevel(quiet, for: client(1))
+        precondition(owners[0].playbackLevel == quiet && owners[1].playbackLevel == .unity)
+        expectFailure { try routes.setPlaybackLevel(quiet, for: client(1, birth: 200)) }
         try! routes.select(client: client(1), destination: b) // shared destination; no shared owner/transport
+        precondition(owners[2].playbackLevel == quiet)
         precondition(owners[0].stops == 1 && owners[1].stops == 0 && owners.count == 3)
         precondition(routes.route(for: client(1))!.owner.mirrorDestination!.hasSameIdentity(as: b))
         precondition(routes.route(for: client(2)) === second)
@@ -115,6 +118,7 @@ enum AudioRoutesTests {
         // One monitor can coexist with hardware routes; no duplicate-client tap.
         let monitor = try! routes.start(client: client(3), destination: nil)
         precondition(monitor.isMonitor && !owners.last!.exclusiveOutputPending)
+        expectFailure { try routes.setPlaybackLevel(quiet, for: client(3)) }
         expectFailure { try routes.start(client: client(4), destination: nil) }
         expectFailure { try routes.start(client: client(3), destination: a) }
         try! routes.start(client: client(4), destination: a)
@@ -164,10 +168,13 @@ enum AudioRoutesTests {
         }
         let blocked = try! switching.start(client: client(12), destination: a)
         let unaffected = try! switching.start(client: client(13), destination: b)
+        try! switching.setPlaybackLevel(quiet, for: client(12))
         switchingOwners[0].stopFault = .restore
         expectFailure { try switching.select(client: client(12), destination: b) }
         precondition(switching.route(for: client(12)) === blocked && switchingOwners.count == 2)
         precondition(switchingOwners[0].restorationPending && switchingOwners[1].stops == 0)
+        precondition(switchingOwners[0].playbackLevel == quiet)
+        expectFailure { try switching.setPlaybackLevel(.unity, for: client(12)) }
         precondition(switching.route(for: client(13)) === unaffected && unaffected.owner.exclusiveOutputPending)
         switchingOwners[0].stopFault = .cleanup
         expectFailure { try switching.select(client: client(12), destination: nil) }
@@ -218,7 +225,8 @@ enum AudioRoutesTests {
         _ = NSApplication.shared
         var owners: [SimulatedRouteOwner] = []
         let routes = AudioRoutes { let owner = SimulatedRouteOwner(); owners.append(owner); return owner }
-        let controller = AudioRouterApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
+        let properties = SimulatedAudioDeviceProperties()
+        let controller = AudioRouterApp(audio: AudioDevices(properties: properties), routes: routes,
                                       processes: SimulatedProcessInventory(clients: [client(41), client(42), client(43)]))
         controller.refreshInventory()
         func choose(_ row: ApplicationAudioRow, destination: AudioDevice?) {
@@ -236,20 +244,28 @@ enum AudioRoutesTests {
             precondition(NSApp.sendAction(picker.action!, to: picker.target, from: picker))
         }
         let rows = controller.panel.applicationRows
+        precondition(!rows[0].gainSlider.isEnabled && !rows[0].muteButton.isEnabled)
         choose(rows[0], destination: devices.first!)
+        precondition(rows[0].gainSlider.isEnabled && rows[0].gainSlider.doubleValue == 1)
+        let outputMenu = rows[0].destinationPicker.menu
+        rows[0].gainSlider.doubleValue = 0.35
+        precondition(NSApp.sendAction(rows[0].gainSlider.action!, to: rows[0].gainSlider.target, from: rows[0].gainSlider))
+        precondition(abs(owners[0].playbackLevel.gain - 0.35) < 0.00001 && !owners[0].playbackLevel.muted)
+        rows[0].muteButton.state = .on
+        precondition(NSApp.sendAction(rows[0].muteButton.action!, to: rows[0].muteButton.target, from: rows[0].muteButton))
+        precondition(owners[0].playbackLevel.muted && rows[0].gainLabel.stringValue == "35%")
+        precondition(rows[0].destinationPicker.menu === outputMenu)
         precondition(rows[1].destinationPicker.isEnabled)
         choose(rows[1], destination: devices.last!)
-        precondition(routes.routes.count == 2 && controller.panel.routePicker.numberOfItems == 2)
+        precondition(routes.routes.count == 2)
         precondition(rows[0].destinationPicker.titleOfSelectedItem == devices.first!.name)
         precondition(rows[1].destinationPicker.titleOfSelectedItem == devices.last!.name)
         choose(rows[0], destination: devices.last!)
         precondition(owners[0].stops == 1 && owners[1].stops == 0)
-        let picker = controller.panel.routePicker
-        picker.selectItem(at: 0)
-        precondition(NSApp.sendAction(picker.action!, to: picker.target, from: picker))
-        let stop = controller.panel.stopButton
-        precondition(NSApp.sendAction(stop.action!, to: stop.target, from: stop))
-        precondition(owners[1].stops == 1 && owners[2].stops == 0) // selected client 42, not last-started 41
+        precondition(owners[2].playbackLevel == owners[0].playbackLevel && owners[1].playbackLevel == .unity)
+        precondition(properties.writes.isEmpty)
+        choose(rows[1], destination: nil)
+        precondition(owners[1].stops == 1 && owners[2].stops == 0) // client 42, not last-started 41
         choose(rows[0], destination: nil)
         precondition(routes.routes.isEmpty)
         choose(rows[0], destination: devices.first!)
@@ -259,14 +275,19 @@ enum AudioRoutesTests {
         let monitor = controller.panel.monitorButton
         precondition(monitor.isEnabled && NSApp.sendAction(monitor.action!, to: monitor.target, from: monitor))
         precondition(routes.routes.count == 2 && routes.routes.last!.isMonitor)
+        precondition(rows[0].gainSlider.doubleValue == 1 && rows[0].muteButton.state == .off)
+        precondition(!rows[2].gainSlider.isEnabled && !rows[2].muteButton.isEnabled)
         // Inventory loss retains owned app rows and their Original output action.
         let retained = AudioRouterApp(audio: AudioDevices(properties: SimulatedAudioDeviceProperties()), routes: routes,
                                     processes: SimulatedProcessInventory(clients: []))
         retained.refreshInventory()
         precondition(retained.panel.applicationRows.count == 2)
         precondition(retained.panel.applicationRows.allSatisfy { $0.destinationPicker.isEnabled })
+        let retainedMonitor = retained.panel.applicationRows.first { $0.client.hasSameIdentity(as: client(43)) }!
+        choose(retainedMonitor, destination: nil)
+        precondition(routes.routes.count == 1 && !routes.routes[0].isMonitor)
         precondition(retained.applicationShouldTerminate(NSApp) == .terminateNow)
         precondition(routes.routes.isEmpty)
-        print("Production app-row, route-picker, monitor and Quit actions with simulated lifecycle/inventory: passed (no live capture or host writes)")
+        print("Production app-row routing/gain/stop, retained monitor-stop and Quit actions with simulated lifecycle/inventory: passed (no live capture or host writes)")
     }
 }

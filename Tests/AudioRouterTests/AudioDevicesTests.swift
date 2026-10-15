@@ -58,6 +58,7 @@ struct AudioDevicesTests {
         print("Volume bounds: passed")
         testDestinationErrors()
         SystemAudioTests.run()
+        AudioProcessesTests.run()
         var samples: [Float32] = [-0.75, 0.3, .nan]
         samples.withUnsafeMutableBufferPointer { buffer in
             var list = AudioBufferList(mNumberBuffers: 1,

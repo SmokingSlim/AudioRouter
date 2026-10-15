@@ -11,39 +11,36 @@ enum RoutePresentationTests {
                 hasDestination: destination, canSuppressOriginal: ready, exclusiveOutputPending: pending)
         }
         let idle = state(resources: false, running: false, destination: false)
-        precondition(idle.title == "No active route" && !idle.suppressionEnabled)
+        precondition(idle.title == "No active route")
         let waiting = state()
-        precondition(waiting.title.contains("waiting") && !waiting.suppressionEnabled)
+        precondition(waiting.title == "Starting…")
         let ready = state(ready: true)
-        precondition(ready.title.contains("original playback unchanged") && ready.suppressionEnabled)
+        precondition(ready.title == "Also playing on original output")
+        precondition(ready.detail.contains("Choose Original output") && ready.detail.contains("restart"))
         let pending = state(pending: true)
-        precondition(pending.title == "Routing · waiting for stable playback")
-        precondition(pending.detail.contains("automatically") && !pending.suppressionEnabled)
-        // Ready PCM does not turn a deferred route into a manual opt-in.
+        precondition(pending.title == "Starting…" && pending.detail.contains("automatically"))
+        // Ready PCM still describes deferred automatic suppression, not opt-in.
         let pendingReady = state(ready: true, pending: true)
-        precondition(pendingReady.title == pending.title && !pendingReady.suppressionEnabled)
+        precondition(pendingReady == pending)
         let pendingRestore = state(restoring: true, ready: true, pending: true)
-        precondition(pendingRestore.title.contains("restoration pending") && !pendingRestore.suppressionEnabled)
+        precondition(pendingRestore.title.contains("restoration pending"))
         let pendingStop = state(stopping: true, pending: true)
-        precondition(pendingStop.title == "Audio cleanup pending" && !pendingStop.suppressionEnabled)
+        precondition(pendingStop.title == "Audio cleanup pending")
         let exclusive = state(suppressed: true)
-        precondition(exclusive.title.contains("suppression requested"))
-        precondition(exclusive.detail.contains("not a measurement"))
-        precondition(exclusive.suppressionTitle == "Restore original (keep mirror)" && exclusive.suppressionEnabled)
+        precondition(exclusive.title.isEmpty && exclusive.detail.contains("not a measurement"))
         let restoring = state(restoring: true, ready: true)
-        precondition(restoring.title.contains("restoration pending") && !restoring.suppressionEnabled)
-        precondition(restoring.stopTitle == "Retry restore / cleanup")
+        precondition(restoring.title.contains("restoration pending"))
+        precondition(restoring.detail.contains("Choose Original output"))
         let stopping = state(stopping: true, suppressed: true, ready: true)
-        precondition(stopping.title == "Audio cleanup pending" && !stopping.suppressionEnabled)
+        precondition(stopping.title == "Audio cleanup pending")
         let retained = state(running: false, ready: true)
-        precondition(retained.title == "Audio cleanup pending" && !retained.suppressionEnabled)
+        precondition(retained.title == "Audio cleanup pending" && retained.detail.contains("Choose Original output"))
         let monitor = state(destination: false, ready: true)
-        precondition(monitor.title.contains("Monitoring") && !monitor.suppressionEnabled)
+        precondition(monitor.title.contains("Monitoring"))
         // Priority: failed restoration must never be displayed as a ready or
         // successfully exclusive route, even with stale confirmation facts.
         let ambiguous = state(stopping: true, restoring: true, suppressed: true, ready: true)
-        precondition(ambiguous.title.contains("restoration pending") && !ambiguous.suppressionEnabled)
-        precondition(ready.suppressionTitle == "Use exclusively")
+        precondition(ambiguous == restoring)
         print("Route presentation: idle, monitor, deferred exclusive startup, ready, suppression request, restoration/cleanup retention: passed")
 
         _ = NSApplication.shared
@@ -73,7 +70,8 @@ enum RoutePresentationTests {
         precondition(rows[1].destinationPicker.isEnabled) // another route can start independently
         rows[1].update(isOwner: false, canStart: false, canChangeDestination: false, destination: nil, state: idle)
         precondition(!rows[1].destinationPicker.isEnabled) // capacity/duplicate-process guard
-        precondition(rows[0].statusLabel.stringValue.contains("suppression requested"))
+        precondition(rows[0].statusLabel.stringValue.isEmpty && rows[0].statusLabel.isHidden)
+        precondition(rows[2].statusLabel.stringValue.isEmpty && rows[2].statusLabel.isHidden)
         var actionCount = 0
         rows[0].onSelection = { selected, selection in
             precondition(selected.hasSameIdentity(as: client(1)))
@@ -94,6 +92,7 @@ enum RoutePresentationTests {
         precondition(actionCount == 2) // action payloads preserve client/device identities
         rows[0].update(isOwner: true, canStart: false, canChangeDestination: false, destination: destination, state: restoring)
         precondition(picker.isEnabled && picker.item(at: 0)?.isEnabled == true)
+        precondition(!rows[0].statusLabel.isHidden && rows[0].statusLabel.stringValue == restoring.title)
         picker.menu!.delegate?.menuWillOpen?(picker.menu!)
         precondition(picker.itemArray.dropFirst().allSatisfy { !$0.isEnabled })
         picker.menu!.delegate?.menuDidClose?(picker.menu!)
@@ -111,14 +110,13 @@ enum RoutePresentationTests {
         precondition(!unsafe.destinationPicker.isEnabled)
         rows[0].update(isOwner: true, canStart: false, canChangeDestination: true, destination: destination, state: exclusive)
         panel.setApplicationRows(Array(rows.prefix(3)))
-        panel.stateTitle.stringValue = exclusive.title
-        panel.stateDetail.stringValue = exclusive.detail
-        panel.stateTitle.isHidden = true
-        panel.stateDetail.isHidden = true
-        panel.applicationsHint.stringValue = "Experimental routing · original playback stays unmuted until ready"
-        panel.suppressionButton.title = exclusive.suppressionTitle
-        panel.routePicker.addItem(withTitle: "Audio App 1 · PID 1 → \(destination.name)")
-        panel.setRouteControlsVisible(true)
+        panel.applicationsHint.stringValue = ""
+        panel.applicationsHint.isHidden = true
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let controls = descendants(panel.view)
+        precondition(!controls.compactMap { ($0 as? NSTextField)?.stringValue }.contains("Selected app · route controls"))
+        let titles = controls.compactMap { ($0 as? NSButton)?.title }
+        precondition(!titles.contains("Use exclusively") && !titles.contains("Stop & restore original"))
         panel.diagnosticsLabel.stringValue = "Peak: 100%\nBuffer: 20 underruns, 30 dropped packets\n12 active clients; 2 with unknown output activity. Active I/O does not prove audibility."
         panel.resizeToFit(maximumHeight: 740)
         let compact = panel.preferredContentSize
@@ -142,8 +140,10 @@ enum RoutePresentationTests {
         }
         for row in rows { row.update(isOwner: row === rows[0], canStart: true, canChangeDestination: true, destination: destination, state: exclusive) }
         panel.setDiagnosticsVisible(true)
-        panel.resizeToFit(maximumHeight: 560)
-        precondition(panel.preferredContentSize.height <= 560)
+        // The removed section now fits at 560pt; use a genuinely short
+        // viewport to continue exercising outer-scroll reachability.
+        panel.resizeToFit(maximumHeight: 360)
+        precondition(panel.preferredContentSize.height <= 360)
         panel.view.setFrameSize(panel.preferredContentSize)
         panel.view.layoutSubtreeIfNeeded()
         let outer = panel.view.subviews.first as! NSScrollView
@@ -155,7 +155,7 @@ enum RoutePresentationTests {
         precondition(outer.documentVisibleRect.intersects(quitRect))
         let appDocument = panel.applicationScroll.documentView!
         let lastRowRect = rows.last!.convert(rows.last!.bounds, to: appDocument)
-        precondition(appDocument.bounds.height >= CGFloat(rows.count * 58))
+        precondition(appDocument.bounds.height >= CGFloat(rows.count) * ApplicationAudioRow.rowHeight)
         appDocument.scrollToVisible(lastRowRect)
         precondition(panel.applicationScroll.documentVisibleRect.intersects(lastRowRect))
         panel.setDiagnosticsVisible(false)

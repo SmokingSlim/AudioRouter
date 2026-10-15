@@ -33,7 +33,7 @@ final class PlaybackSink {
 
     // Install this owner in ProcessMeter BEFORE calling prepare, so any partial
     // Audio Unit remains reachable for cleanup even if configuration fails.
-    func prepare(sourceFormat: AudioStreamBasicDescription) throws {
+    func prepare(sourceFormat: AudioStreamBasicDescription, level: PlaybackLevel = .unity) throws {
         guard SampleTransport.supports(sourceFormat) else { throw Failure.unsupportedSource }
         try AudioDevices().validateMirrorDestination(destination)
         var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
@@ -52,7 +52,7 @@ final class PlaybackSink {
         guard native.mChannelsPerFrame == 2, native.mSampleRate == rate,
               (32_000...96_000).contains(rate) else { throw Failure.unsupportedOutput }
         outputFormat = native
-        let transport = SampleTransport(format: sourceFormat, outputRate: rate)
+        let transport = SampleTransport(format: sourceFormat, outputRate: rate, level: level)
         self.transport = transport
         var clientFormat = AudioStreamBasicDescription(mSampleRate: rate,
             mFormatID: kAudioFormatLinearPCM,
@@ -75,7 +75,7 @@ final class PlaybackSink {
 
     func validate(requireRunning: Bool = true) throws {
         try AudioDevices().validateMirrorDestination(destination)
-        guard let unit, try AudioDevices().sampleRate(destination.id) == outputFormat.mSampleRate else {
+        guard unit != nil, try AudioDevices().sampleRate(destination.id) == outputFormat.mSampleRate else {
             throw Failure.changedDestination
         }
         var device = AudioObjectID(kAudioObjectUnknown)
@@ -87,9 +87,7 @@ final class PlaybackSink {
         }
         if requireRunning {
             var running: UInt32 = 0
-            var size = UInt32(MemoryLayout<UInt32>.size)
-            try check(AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global,
-                                            0, &running, &size))
+            try get(kAudioOutputUnitProperty_IsRunning, scope: kAudioUnitScope_Global, value: &running)
             guard running != 0 else { throw Failure.changedDestination }
         }
     }

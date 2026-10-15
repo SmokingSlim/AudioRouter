@@ -31,7 +31,9 @@ final class SystemAudioRow: NSStackView {
         title.widthAnchor.constraint(equalToConstant: 100).isActive = true
         let icon = NSImageView(image: NSImage(systemSymbolName: role == .input ? "mic" : role == .output ? "speaker.wave.2" : "bell", accessibilityDescription: role.title) ?? NSImage())
         icon.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        let headline = NSStackView(views: [icon, title, NSView(), picker])
+        let headline = NSStackView(views: role == .soundEffects
+            ? [icon, title, NSView(), picker] : [icon, title, NSView()])
+        headline.alignment = .centerY
         headline.distribution = .fill
         headline.spacing = 8
         picker.widthAnchor.constraint(equalToConstant: 230).isActive = true
@@ -43,25 +45,24 @@ final class SystemAudioRow: NSStackView {
         picker.target = self
         picker.action = #selector(selectDevice(_:))
         picker.setAccessibilityLabel("System \(role.title.lowercased()) device")
-        if role != .soundEffects {
-            volume.isContinuous = true
-            volume.target = self
-            volume.action = #selector(changeVolume(_:))
-            volume.widthAnchor.constraint(equalToConstant: 160).isActive = true
-            volume.setAccessibilityLabel(role == .input ? "System microphone input level" : "System output volume, all apps on this device")
-            valueLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
-            muteButton.target = self
-            muteButton.action = #selector(changeMute(_:))
-            muteButton.setAccessibilityLabel("Mute system \(role.title.lowercased()) device")
-            let controls = NSStackView(views: [volume, valueLabel, muteButton, hint])
-            controls.spacing = 8
-            addArrangedSubview(controls)
-            controls.translatesAutoresizingMaskIntoConstraints = false
-            controls.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-        } else {
-            hint.stringValue = "macOS alerts and system sounds · no effects processing"
-            addArrangedSubview(hint)
-        }
+        hint.isHidden = true
+        guard role != .soundEffects else { return }
+        volume.isContinuous = true
+        volume.target = self
+        volume.action = #selector(changeVolume(_:))
+        volume.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        volume.setAccessibilityLabel(role == .input ? "System microphone input level" : "System output volume, all apps on this device")
+        valueLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        muteButton.target = self
+        muteButton.action = #selector(changeMute(_:))
+        muteButton.setAccessibilityLabel("Mute system \(role.title.lowercased()) device")
+        let controls = NSStackView(views: [volume, valueLabel, muteButton, NSView(), picker])
+        controls.alignment = .centerY
+        controls.spacing = 8
+        addArrangedSubview(controls)
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        controls.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        addArrangedSubview(hint)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -96,7 +97,8 @@ final class SystemAudioRow: NSStackView {
         muteButton.isEnabled = muted != nil && displayedDevice?.uid != nil
         muteButton.state = muted == true ? .on : .off
         if role != .soundEffects {
-            hint.stringValue = volumeValue == nil ? "\(role == .input ? "Input level" : "Volume") unavailable" : "Hardware \(role == .input ? "input level" : "volume")"
+            hint.stringValue = volumeValue == nil ? "\(role == .input ? "Input level" : "Volume") unavailable" : ""
+            hint.isHidden = hint.stringValue.isEmpty
         }
     }
 
@@ -123,8 +125,15 @@ enum AppOutputSelection {
 final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
     private(set) var client: AudioProcess
     let nameLabel: NSTextField
-    let statusLabel = AudioPopover.label("Not redirected", secondary: true)
+    let statusLabel = AudioPopover.label("", secondary: true)
     let destinationPicker = NSPopUpButton()
+    static let rowHeight: CGFloat = 78
+    let gainSlider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let gainLabel = AudioPopover.label("100%", secondary: true)
+    let muteButton = NSButton(checkboxWithTitle: "Mute", target: nil, action: nil)
+    private var levelControls: NSStackView!
+    private var displayedLevel: PlaybackLevel = .unity
+    var onLevel: ((AudioProcess, PlaybackLevel) -> Void)?
     private var devices: [AudioDevice]
     private var canCapture: Bool
     private let image = NSImageView()
@@ -153,7 +162,7 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         distribution = .fill
         alignment = .centerY
         spacing = 10
-        heightAnchor.constraint(equalToConstant: 58).isActive = true
+        heightAnchor.constraint(equalToConstant: Self.rowHeight).isActive = true
         image.image = icon ?? Self.fallbackIcon
         image.imageScaling = .scaleProportionallyDown
         image.widthAnchor.constraint(equalToConstant: 26).isActive = true
@@ -162,7 +171,18 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
         statusLabel.maximumNumberOfLines = 2
-        let text = NSStackView(views: [nameLabel, statusLabel])
+        gainSlider.isContinuous = true
+        gainSlider.target = self
+        gainSlider.action = #selector(changeLevel(_:))
+        gainSlider.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        gainLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        muteButton.target = self
+        muteButton.action = #selector(changeLevel(_:))
+        levelControls = NSStackView(views: [gainSlider, gainLabel, muteButton])
+        levelControls.spacing = 6
+        levelControls.isHidden = true
+        levelControls.toolTip = "Replacement audio only; original output and hardware volume are unchanged."
+        let text = NSStackView(views: [nameLabel, statusLabel, levelControls!])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 3
@@ -179,8 +199,7 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         destinationPicker.menu?.delegate = self
         destinationPicker.target = self
         destinationPicker.action = #selector(selectDestination(_:))
-        destinationPicker.setAccessibilityLabel("\(name) output, starts exclusive routing, does not change system default")
-        toolTip = "\(client.label) · \(client.pid.map { "PID \($0)" } ?? "PID unknown"). Active I/O is not proof of audibility."
+        updateAccessibility(name: name)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -193,10 +212,19 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         if nameLabel.stringValue != name { nameLabel.stringValue = name }
         let displayedIcon = icon ?? Self.fallbackIcon
         if image.image !== displayedIcon { image.image = displayedIcon }
-        destinationPicker.setAccessibilityLabel("\(name) output, starts exclusive routing, does not change system default")
+        updateAccessibility(name: name)
     }
 
-    func update(isOwner: Bool, canStart: Bool, canChangeDestination: Bool, destination: AudioDevice?, state: RoutePresentation) {
+    private func updateAccessibility(name: String) {
+        destinationPicker.setAccessibilityLabel("\(name) output, starts exclusive routing, does not change system default")
+        gainSlider.setAccessibilityLabel("\(name) replacement audio gain")
+        muteButton.setAccessibilityLabel("Mute \(name) replacement audio")
+    }
+
+    func update(isOwner: Bool, canStart: Bool, canChangeDestination: Bool, destination: AudioDevice?, state: RoutePresentation,
+                level: PlaybackLevel = .unity, canAdjustLevel: Bool = false) {
+        updatePlaybackLevel(level, canAdjust: canAdjustLevel)
+        levelControls.isHidden = !isOwner || destination == nil
         // Render owned facts, not the last attempted menu choice. Failed setup,
         // disconnection or partial cleanup cannot masquerade as a new route.
         canRoute = canCapture && (isOwner ? canChangeDestination : canStart)
@@ -209,8 +237,18 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         if isOwner { status = state.title }
         else if !canCapture { status = "Capture unavailable · identity or feedback risk" }
         else if !canStart { status = "Route capacity reached or process already captured" }
-        else { status = "Not redirected" }
+        else { status = "" }
         if statusLabel.stringValue != status { statusLabel.stringValue = status }
+        statusLabel.isHidden = status.isEmpty
+    }
+
+    func updatePlaybackLevel(_ level: PlaybackLevel, canAdjust: Bool) {
+        displayedLevel = level
+        gainSlider.doubleValue = Double(level.gain)
+        gainLabel.stringValue = "\(Int((level.gain * 100).rounded()))%"
+        muteButton.state = level.muted ? .on : .off
+        gainSlider.isEnabled = canAdjust
+        muteButton.isEnabled = canAdjust
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -254,6 +292,16 @@ final class ApplicationAudioRow: NSStackView, NSMenuDelegate {
         actualMenuItem = destinationPicker.selectedItem
     }
 
+    @objc private func changeLevel(_ sender: NSControl) {
+        guard gainSlider.isEnabled, muteButton.isEnabled,
+              let level = PlaybackLevel(gain: Float(gainSlider.doubleValue), muted: muteButton.state == .on) else { return }
+        onLevel?(client, level)
+        // Render authoritative state through the controller, not an optimistic
+        // policy cached by this view.
+        gainSlider.doubleValue = Double(displayedLevel.gain)
+        muteButton.state = displayedLevel.muted ? .on : .off
+    }
+
     @objc private func selectDestination(_ sender: NSPopUpButton) {
         guard let selection = sender.selectedItem?.representedObject as? AppOutputSelection else { return }
         onSelection?(client, selection)
@@ -269,12 +317,7 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
     let systemRows = SystemAudioRole.allCases.map { SystemAudioRow(role: $0) }
     private(set) var applicationRows: [ApplicationAudioRow] = []
     let applicationsHint = AudioPopover.label("Play audio in an app, then Refresh.", secondary: true)
-    let routePicker = NSPopUpButton()
-    let stateTitle = AudioPopover.label("")
-    let stateDetail = AudioPopover.label("", secondary: true)
     let noticeLabel = AudioPopover.label("", secondary: true)
-    let suppressionButton = NSButton(title: "Use exclusively", target: nil, action: nil)
-    let stopButton = NSButton(title: "Stop & restore original", target: nil, action: nil)
     let diagnosticsToggle = NSButton(checkboxWithTitle: "Show diagnostics", target: nil, action: nil)
     let monitorPicker = NSPopUpButton()
     let monitorButton = NSButton(title: "Monitor app only", target: nil, action: nil)
@@ -286,7 +329,6 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
     private let applications = NSStackView()
     private weak var expandedApplicationRow: ApplicationAudioRow?
     private let diagnostics = NSStackView()
-    private var routeControls: NSBox!
     private weak var trackedMenu: NSMenu?
     var isTrackingMenu: Bool { trackedMenu != nil }
     var onMenuTrackingEnded: (() -> Void)?
@@ -349,14 +391,7 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
         ])
         applicationHeight = applicationScroll.heightAnchor.constraint(equalToConstant: 60)
         applicationHeight.isActive = true
-        let guidance = Self.label("Choose each app’s output independently. Up to four routes, including monitoring.", secondary: true)
-        add(Self.section(title: "Applications · redirect audio to", views: [guidance, applicationScroll, applicationsHint]))
-        routePicker.setAccessibilityLabel("Owned audio route for Restore original, Use exclusively and Stop")
-        routePicker.autoenablesItems = false
-        stateTitle.font = .systemFont(ofSize: 12, weight: .semibold)
-        routeControls = Self.section(title: "Selected app · route controls",
-            views: [routePicker, stateTitle, stateDetail, Self.row([suppressionButton, stopButton])])
-        add(routeControls)
+        add(Self.section(title: "Application", views: [applicationScroll, applicationsHint]))
         noticeLabel.maximumNumberOfLines = 0
         add(noticeLabel)
         noticeLabel.isHidden = true
@@ -373,8 +408,8 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
         diagnostics.isHidden = true
         monitorPicker.setAccessibilityLabel("Audio client to monitor without redirecting")
         add(Self.row([refreshButton, quitButton]))
-        for button in [suppressionButton, stopButton, monitorButton, refreshButton, quitButton] { button.bezelStyle = .rounded }
-        for picker in systemRows.map(\.picker) + [routePicker, monitorPicker] { picker.menu?.delegate = self }
+        for button in [monitorButton, refreshButton, quitButton] { button.bezelStyle = .rounded }
+        for picker in systemRows.map(\.picker) + [monitorPicker] { picker.menu?.delegate = self }
     }
 
     func menuWillOpen(_ menu: NSMenu) { trackedMenu = menu }
@@ -384,7 +419,6 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
         onMenuTrackingEnded?()
     }
     func cancelMenuTracking() { trackedMenu?.cancelTracking() }
-    func setRouteControlsVisible(_ visible: Bool) { routeControls.isHidden = !visible }
 
     func setApplicationRows(_ rows: [ApplicationAudioRow]) {
         precondition(!isTrackingMenu)
@@ -446,7 +480,7 @@ final class AudioPopover: NSViewController, NSMenuDelegate {
         if let maximumHeight { self.maximumHeight = maximumHeight }
         view.layoutSubtreeIfNeeded()
         let nonListHeight = content.fittingSize.height + 32 - (applicationScroll.isHidden ? 0 : applicationHeight.constant)
-        applicationHeight.constant = min(CGFloat(max(1, applicationRows.count)) * 58, 232, max(58, self.maximumHeight - nonListHeight))
+        applicationHeight.constant = min(CGFloat(max(1, applicationRows.count)) * ApplicationAudioRow.rowHeight, ApplicationAudioRow.rowHeight * 4, max(ApplicationAudioRow.rowHeight, self.maximumHeight - nonListHeight))
         view.layoutSubtreeIfNeeded()
         // The app list normally absorbs growth. On short screens or expanded
         // diagnostics, the outer viewport keeps every control reachable too.

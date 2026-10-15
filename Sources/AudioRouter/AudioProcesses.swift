@@ -36,6 +36,14 @@ protocol AudioProcessInventory {
 /// can be silent; neither PID nor bundle ID establishes control or routing.
 struct AudioProcesses: AudioProcessInventory {
     private let system = AudioObjectID(kAudioObjectSystemObject)
+    private let properties: any AudioDeviceProperties
+    private let processBirth: (pid_t) -> ProcessBirth?
+
+    init(properties: any AudioDeviceProperties = CoreAudioDeviceProperties(),
+         processBirth: @escaping (pid_t) -> ProcessBirth? = AudioProcesses.readProcessBirth) {
+        self.properties = properties
+        self.processBirth = processBirth
+    }
 
     func snapshot() throws -> AudioProcessSnapshot {
         let ids = try processIDs()
@@ -71,7 +79,7 @@ struct AudioProcesses: AudioProcessInventory {
         return currentBirth == originalBirth
     }
 
-    private func processBirth(_ pid: pid_t) -> ProcessBirth? {
+    private static func readProcessBirth(_ pid: pid_t) -> ProcessBirth? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         let read = withUnsafeMutablePointer(to: &info) { proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size) }
@@ -80,57 +88,22 @@ struct AudioProcesses: AudioProcessInventory {
     }
 
     private func processIDs() throws -> [AudioObjectID] {
-        var address = globalAddress(kAudioHardwarePropertyProcessObjectList)
-        var size: UInt32 = 0
-        try check(AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size))
-        let stride = MemoryLayout<AudioObjectID>.stride
-        guard Int(size) % stride == 0, Int(size) / stride <= 4096 else {
-            throw AudioDeviceError.inventoryUnavailable
-        }
-        let count = Int(size) / stride
-        guard count > 0 else { return [] }
-        var ids = [AudioObjectID](repeating: 0, count: count)
-        try ids.withUnsafeMutableBufferPointer { buffer in
-            try check(AudioObjectGetPropertyData(system, &address, 0, nil, &size, buffer.baseAddress!))
-        }
-        // A changed list is not a complete snapshot. Do not present its truncated tail as absence.
-        guard Int(size) == count * stride else { throw AudioDeviceError.inventoryUnavailable }
-        return ids
+        try properties.objectIDs(system, globalAddress(kAudioHardwarePropertyProcessObjectList))
     }
 
     private func uint32(_ id: AudioObjectID, selector: AudioObjectPropertySelector) -> UInt32? {
-        var address = globalAddress(selector)
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
-              size == UInt32(MemoryLayout<UInt32>.size) else { return nil }
-        return value
+        try? properties.uint32(id, globalAddress(selector))
     }
 
     private func outputDeviceIDs(_ id: AudioObjectID) -> [AudioObjectID]? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
-                                                 mScope: kAudioObjectPropertyScopeOutput,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr else { return nil }
-        let stride = MemoryLayout<AudioObjectID>.stride
-        guard Int(size) % stride == 0, Int(size) / stride <= 4096 else { return nil }
-        let count = Int(size) / stride
-        guard count > 0 else { return [] }
-        var ids = [AudioObjectID](repeating: 0, count: count)
-        let status = ids.withUnsafeMutableBufferPointer { buffer in
-            AudioObjectGetPropertyData(id, &address, 0, nil, &size, buffer.baseAddress!)
-        }
-        guard status == noErr, Int(size) == count * stride else { return nil }
-        return ids
+        let address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
+                                                mScope: kAudioObjectPropertyScopeOutput,
+                                                mElement: kAudioObjectPropertyElementMain)
+        return try? properties.objectIDs(id, address)
     }
 
     private func bundleID(_ id: AudioObjectID) -> String? {
-        var address = globalAddress(kAudioProcessPropertyBundleID)
-        var value: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
-        return value?.takeRetainedValue() as String?
+        try? properties.string(id, globalAddress(kAudioProcessPropertyBundleID))
     }
 
     private func globalAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
@@ -138,7 +111,4 @@ struct AudioProcesses: AudioProcessInventory {
                                    mElement: kAudioObjectPropertyElementMain)
     }
 
-    private func check(_ status: OSStatus) throws {
-        guard status == noErr else { throw AudioDeviceError.coreAudio(status) }
-    }
 }

@@ -12,6 +12,8 @@ protocol AudioRouteOwner: AnyObject {
     var canSuppressOriginal: Bool { get }
     var exclusiveOutputPending: Bool { get }
     var mirrorDestination: AudioDevice? { get }
+    var playbackLevel: PlaybackLevel { get }
+    func setPlaybackLevel(_ level: PlaybackLevel)
     var peak: Float { get }
     var transportStatus: String? { get }
     var onLevel: ((Float) -> Void)? { get set }
@@ -20,8 +22,6 @@ protocol AudioRouteOwner: AnyObject {
     var onStateChange: (() -> Void)? { get set }
     func start(client: AudioProcess, mirroringTo: AudioDevice?, suppressWhenReady: Bool) throws
     func stop() throws
-    func restoreOriginalPlayback() throws
-    func suppressOriginalPlayback() throws
 }
 
 extension ProcessMeter: AudioRouteOwner {}
@@ -51,15 +51,17 @@ final class AudioRoutes {
                 suppressionRequested: owner.suppressionRequested, hasDestination: owner.mirrorDestination != nil,
                 canSuppressOriginal: owner.canSuppressOriginal, exclusiveOutputPending: owner.exclusiveOutputPending)
         }
+        var canAdjustLevel: Bool { canReplace }
         var canReplace: Bool {
             owner.isRunning && !owner.isStopping && !owner.restorationPending && owner.mirrorDestination != nil
         }
     }
 
     enum Failure: LocalizedError {
-        case capacity, unidentified, duplicateClient, monitorExists, cleanupPending
+        case capacity, unidentified, duplicateClient, monitorExists, cleanupPending, levelUnavailable
         var errorDescription: String? {
             switch self {
+            case .levelUnavailable: "Gain/mute requires a running owned hardware route without pending restoration."
             case .capacity: "AudioRouter supports up to four owned routes, including monitoring. Stop a route before adding another."
             case .unidentified: "The audio client's lifetime identity is unavailable. Refresh and try again."
             case .duplicateClient: "This process already has an owned route. Restore and clean it up before starting another capture of that process."
@@ -107,9 +109,10 @@ final class AudioRoutes {
     }
 
     @discardableResult
-    func start(client: AudioProcess, destination: AudioDevice?) throws -> Route {
+    func start(client: AudioProcess, destination: AudioDevice?, level: PlaybackLevel = .unity) throws -> Route {
         if let failure = startFailure(client, monitoring: destination == nil) { throw failure }
         let route = Route(client: client, owner: makeOwner(), isMonitor: destination == nil)
+        route.owner.setPlaybackLevel(level)
         routes.append(route) // Install ownership BEFORE any partial setup.
         route.owner.onLevel = { [weak self] _ in self?.onChange?() }
         route.owner.onStateChange = { [weak self, weak route] in
@@ -132,23 +135,26 @@ final class AudioRoutes {
         return route
     }
 
+    func setPlaybackLevel(_ level: PlaybackLevel, for client: AudioProcess) throws {
+        guard let route = route(for: client), !route.operating, route.canAdjustLevel else {
+            throw Failure.levelUnavailable
+        }
+        route.owner.setPlaybackLevel(level)
+        onChange?()
+    }
+
     func select(client: AudioProcess, destination: AudioDevice?) throws {
+        let level = route(for: client)?.owner.playbackLevel ?? .unity
         if let existing = route(for: client) {
             if destination != nil {
                 guard existing.canReplace else { throw Failure.cleanupPending }
             }
             try stop(existing) // Failure retains this owner and blocks replacement only here.
         }
-        if let destination { try start(client: client, destination: destination) }
+        if let destination { try start(client: client, destination: destination, level: level) }
     }
 
     func stop(_ route: Route) throws { try operate(route) { try route.owner.stop() } }
-    func toggleSuppression(_ route: Route) throws {
-        try operate(route) {
-            if route.owner.suppressionRequested || route.owner.restorationPending { try route.owner.restoreOriginalPlayback() }
-            else { try route.owner.suppressOriginalPlayback() }
-        }
-    }
 
     func stopAll() throws {
         var failures: [OperationFailure] = []

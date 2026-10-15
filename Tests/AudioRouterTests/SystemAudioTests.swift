@@ -178,6 +178,50 @@ enum SystemAudioTests {
         precondition(NSApp.sendAction(outputRow.muteButton.action!, to: outputRow.muteButton.target, from: outputRow.muteButton))
         precondition(uiProperties.writes.last?.scope == kAudioObjectPropertyScopeOutput)
         precondition(outputRow.muteButton.state == .on)
-        print("Production System row target/actions through controller and property boundary: passed (no live audio-setting writes)")
+        // Layout and guidance use real controls without live audio writes.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 740),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = controller.panel.view // Off-screen; never activate or order front.
+        controller.panel.resizeToFit(maximumHeight: 740)
+        controller.panel.view.setFrameSize(controller.panel.preferredContentSize)
+        controller.panel.view.layoutSubtreeIfNeeded()
+        let outputPicker = outputRow.picker.convert(outputRow.picker.bounds, to: controller.panel.view)
+        for row in controller.panel.systemRows {
+            let pickerRect = row.picker.convert(row.picker.bounds, to: controller.panel.view)
+            precondition(abs(pickerRect.minX - outputPicker.minX) < 1, "\(row.role): \(pickerRect) vs \(outputPicker)")
+            precondition(abs(pickerRect.maxX - outputPicker.maxX) < 1)
+            precondition(abs(row.picker.alignmentRect(forFrame: row.picker.frame).width - 230) < 1, "\(row.role): picker frame \(pickerRect), alignment \(row.picker.alignmentRect(forFrame: row.picker.frame))")
+            precondition(row.picker.accessibilityLabel() == "System \(row.role.title.lowercased()) device")
+            if row.role == .soundEffects {
+                precondition(row.arrangedSubviews.count == 1)
+                precondition(row.hint.superview == nil && row.hint.stringValue.isEmpty)
+                let headline = row.arrangedSubviews[0] as! NSStackView
+                precondition(headline.arrangedSubviews.count == 4 && row.picker.superview === headline)
+                let icon = headline.arrangedSubviews[0] as! NSImageView
+                let title = headline.arrangedSubviews[1] as! NSTextField
+                precondition(title.stringValue == row.role.title)
+                let pickerAlignment = headline.convert(row.picker.alignmentRect(forFrame: row.picker.frame), to: controller.panel.view)
+                for view in [icon, title] {
+                    let rect = headline.convert(view.alignmentRect(forFrame: view.frame), to: controller.panel.view)
+                    precondition(abs(rect.midY - pickerAlignment.midY) < 1)
+                    precondition(rect.maxX <= pickerAlignment.minX)
+                }
+                row.updateLevels(volumeValue: nil, muted: nil)
+                precondition(row.hint.superview == nil && row.hint.stringValue.isEmpty)
+                continue
+            }
+            precondition(row.volume.superview === row.picker.superview)
+            let sliderRect = row.volume.convert(row.volume.bounds, to: controller.panel.view)
+            precondition(abs(sliderRect.midY - pickerRect.midY) < 1)
+            precondition(row.muteButton.convert(row.muteButton.bounds, to: controller.panel.view).maxX <= pickerRect.minX)
+            precondition(row.hint.isHidden && row.hint.stringValue.isEmpty)
+            precondition(row.volume.accessibilityLabel() == (row.role == .input
+                ? "System microphone input level" : "System output volume, all apps on this device"))
+            row.updateLevels(volumeValue: nil, muted: nil)
+            precondition(!row.hint.isHidden && row.hint.stringValue == (row.role == .input ? "Input level unavailable" : "Volume unavailable"))
+            row.updateLevels(volumeValue: 0.5, muted: false)
+            precondition(row.hint.isHidden && row.hint.stringValue.isEmpty)
+        }
+        print("Production System row target/actions, aligned level/device controls, concise hints and accessibility: passed (no live audio-setting writes)")
     }
 }

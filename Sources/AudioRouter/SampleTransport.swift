@@ -3,8 +3,9 @@ import Foundation
 import Synchronization
 
 /// One serial capture producer, one HAL render consumer. Storage is allocated
-/// before either callback starts. Only published indices cross threads; each
-/// side owns its cursor. No locks, Tasks, or allocations in push/render.
+/// before either callback starts. Indices, status and effective gain cross
+/// threads atomically; cursors and gain ramps have one owning callback.
+/// No locks, Tasks, or allocations in push/render.
 final class SampleTransport: @unchecked Sendable {
     static let capacity = 16_384 // stereo frames, 128 KiB
     let peak = Atomic<Float>(0)
@@ -24,8 +25,22 @@ final class SampleTransport: @unchecked Sendable {
     private let target: Int
     private var phase: Double = 0 // consumer only
     private var primed = false // consumer only
+    private let gainTarget: Atomic<Float>
+    private let rampFrames: Int
+    private var currentGain: Float // consumer only
+    private var rampTarget: Float // consumer only
+    private var rampRemaining = 0 // consumer only
+    private var gainStep: Float = 0 // consumer only
 
-    init(format: AudioStreamBasicDescription, outputRate: Double) {
+    func setLevel(_ level: PlaybackLevel) {
+        gainTarget.store(level.effectiveGain, ordering: .relaxed)
+    }
+
+    init(format: AudioStreamBasicDescription, outputRate: Double, level: PlaybackLevel = .unity) {
+        gainTarget = Atomic(level.effectiveGain)
+        currentGain = level.effectiveGain
+        rampTarget = level.effectiveGain
+        rampFrames = max(1, Int(outputRate * 0.01))
         readinessFrames = UInt64(outputRate * 0.1)
         planar = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
         ratio = format.mSampleRate / outputRate
@@ -87,7 +102,7 @@ final class SampleTransport: @unchecked Sendable {
         let stride = planar ? 1 : 2
         for frame in 0..<frames {
             let l = left[frame * stride], rr = right[frame * stride]
-            // No gain: preserve finite PCM (including >1 peaks); invalid PCM
+            // Preserve pre-gain PCM (including >1 peaks); invalid PCM
             // becomes silence rather than poisoning the output pipeline.
             let a = l.isFinite ? l : 0, b = rr.isFinite ? rr : 0
             let index = ((w &+ frame) & (Self.capacity - 1)) * 2
@@ -151,6 +166,12 @@ final class SampleTransport: @unchecked Sendable {
         }
         let correction = min(0.005, max(-0.005, Double(available - target) / Double(target) * 0.001))
         let step = ratio * (1 + correction)
+        let requestedGain = gainTarget.load(ordering: .relaxed)
+        if requestedGain != rampTarget {
+            rampTarget = requestedGain
+            rampRemaining = rampFrames
+            gainStep = (rampTarget - currentGain) / Float(rampFrames)
+        }
         var rendered = 0
         for frame in 0..<frames {
             let advance = Int(phase + step)
@@ -164,8 +185,12 @@ final class SampleTransport: @unchecked Sendable {
             let i = (r & (Self.capacity - 1)) * 2
             let j = ((r &+ 1) & (Self.capacity - 1)) * 2
             let fraction = Float(phase)
-            left[frame] = samples[i] * (1 - fraction) + samples[j] * fraction
-            right[frame] = samples[i + 1] * (1 - fraction) + samples[j + 1] * fraction
+            if rampRemaining > 0 {
+                rampRemaining -= 1
+                currentGain = rampRemaining == 0 ? rampTarget : currentGain + gainStep
+            }
+            left[frame] = (samples[i] * (1 - fraction) + samples[j] * fraction) * currentGain
+            right[frame] = (samples[i + 1] * (1 - fraction) + samples[j + 1] * fraction) * currentGain
             phase += step
             let consumed = Int(phase)
             phase -= Double(consumed)

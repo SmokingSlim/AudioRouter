@@ -1,10 +1,16 @@
 # AudioRouter
 
+For maintenance, start with the [knowledge index](knowledge/index.md) and [current work](knowledge/todo.md). Behavior, code ownership and durable decisions live in the indexed knowledge tree; agent workflow is in [AGENTS.md](AGENTS.md). The existing release narrative and measurements below are retained history pending the documentation cleanup pass, not required startup reading.
+
 Formerly SoundTool. The app, Swift package and source directories are now named AudioRouter; audio behavior is unchanged. The existing `app.soundtool.local` bundle identifier and internal audio identifiers are intentionally retained for identity continuity. Older SoundTool bundles remain local historical artifacts; quit any older copy normally before launching AudioRouter. The pre-rename SwiftPM cache and local benchmark evidence are preserved in ignored `.build-before-rename/`; fresh builds use `.build/`.
 
 An independent, local macOS menu-bar audio utility. It does not use SoundSource code, assets, frameworks, identifiers, or licensing. There is no trial period.
 
-## Current slice — 0.10.1: interaction-safe UI
+## Presentation cleanup after 0.10.1
+
+The current source uses **Application** without guidance text. Idle and suppression-confirmed rows rely on the output dropdown rather than redundant status text; startup, mirrored original playback and actionable warnings remain visible. Technical confirmation is under **Show diagnostics**. Lifecycle-warning visibility is owned by `RoutePresentation`. Debug build and standalone tests pass; this cleanup has not been live-audio verified. See [UI behavior](knowledge/mechanics/ui-refresh.md) for the current contract.
+
+## Retained baseline — 0.10.1: interaction-safe UI
 
 The goal is **per-app output routing without changing the Mac's default output**. This build separates **System** controls from scrollable **Application** rows. Each row has an app name/icon, actual route status and output dropdown. Choosing a hardware output still starts routing and automatically requests experimental original-output suppression once replacement playback is stable, without confirmation dialogs. **The user live-verified Spotify mirroring to B in 0.6.0 while original playback and the Mac's default output stayed on A.** **The user subsequently reported successful exclusive playback with 0.7.0.** The user also confirmed that turning off Experimental exclusive output restored Spotify playback on A. The user then disconnected the ADAM D3V while suppression was active and confirmed playback resumed on the chosen default output. The user subsequently retested 0.7.1 and confirmed it works as expected, including the corrected disconnect/recovery reporting. Stop/Quit teardown under faults, repeated/broader recovery and other-app behavior remain separately unverified. The basic single-app route is working for the reported host setup. The user reported that the 0.8.1 dropdown-routing workflow **works great**. The user now reports that the System/Application UI works great and requested concurrent routing before further UI follow-up. This is not a report that every system-setting control was live-tested. **0.10.0 adds up to four independent owned routes**, including at most one diagnostics monitor. **After delivery, the user reported that concurrent routing “works exceptionally.”** This is basic workflow success on this host; specific output combinations and fault/isolation scenarios were not separately described.
 
